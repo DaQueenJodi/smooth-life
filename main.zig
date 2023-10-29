@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 
 const clamp = std.math.clamp;
 
-const NPROC = 4;
+const NPROC = 2;
 
 const USING_SDL = false;
 const USING_RAYLIB = !USING_SDL;
@@ -45,36 +45,12 @@ fn s(n: f32, m: f32) f32 {
     return sigmoid_2(n, sigmoid_m(b_1, d_1, m), sigmoid_m(b_2, d_2, m));
 }
 
-fn calculateNumPixels(comptime r: f32) usize {
-    comptime {
-        var count: usize = 0;
-
-        var dy: i32 = -(outer_radius - 1);
-        while (dy < outer_radius) : (dy += 1) {
-            var dx: i32 = -outer_radius;
-            @setEvalBranchQuota(10000);
-            while (dx < outer_radius) : (dx += 1) {
-                const t: f32 = @floatFromInt(dx*dx + dy*dy);
-                if (t <= r*r) {
-                    count += 1;
-                }
-            }
-        }
-        return count;
-    }
-}
-
 fn calculate_new_value(x: usize, y: usize) f32 {
     const x_i: i32 = @intCast(x);
     const y_i: i32 = @intCast(y);
 
-    const m_size: usize = comptime calculateNumPixels(inner_radius);
-    const n_size: usize = comptime calculateNumPixels(outer_radius) - m_size;
-
-    var n_cells: [n_size]f32 = undefined;
-    var n_len: usize = 0;
-    var m_cells: [m_size]f32 = undefined;
-    var m_len: usize = 0;
+    var n: f32 = 0;
+    var m: f32 = 0;
 
     // zig doesn't support ranges that aren't usize :(
     var dy: i32 = -(outer_radius - 1);
@@ -85,33 +61,12 @@ fn calculate_new_value(x: usize, y: usize) f32 {
             const new_x: usize = @intCast(@mod( x_i+dx, GRID_WIDTH));
             const t: f32 = @floatFromInt(dx*dx + dy*dy);
             if (t <= inner_radius*inner_radius) {
-                m_cells[m_len] = grid[new_y*GRID_HEIGHT+new_x];
-                m_len += 1;
+                m += grid[new_y*GRID_HEIGHT+new_x];
             } else if (t <= outer_radius*outer_radius) {
-                n_cells[n_len] = grid[new_y*GRID_HEIGHT+new_x];
-                n_len += 1;
+                n += grid[new_y*GRID_HEIGHT+new_x];
             }
         }
     }
-    const vector_size = std.simd.suggestVectorSize(f32).?;
-    var n_vec: @Vector(vector_size, f32) = n_cells[0..vector_size].*;
-    var n_i: usize = 1;
-    while (n_i < n_cells.len) : (n_i += vector_size) {
-        const chunk = n_cells[n_i..][0..vector_size];
-        const vec: @Vector(vector_size, f32) = chunk.*;
-        n_vec += vec;
-    }
-    var m_vec: @Vector(vector_size, f32) = m_cells[0..vector_size].*;
-    var m_i: usize = 1;
-    while (m_i < m_cells.len) : (m_i += vector_size) {
-        const chunk = m_cells[m_i..][0..vector_size];
-        const vec: @Vector(vector_size, f32) = chunk.*;
-        m_vec += vec;
-    }
-    var n = @reduce(.Add, n_vec);
-    var m = @reduce(.Add, m_vec);
-    for (n_cells[n_i-4..]) |a| n += a;
-    for (m_cells[m_i-4..]) |a| m += a;
     const res = s(n/N, m/M);
     return res*2.0 - 1;
 }
@@ -129,7 +84,7 @@ fn next(allocator: Allocator) !void {
     var pool = std.Thread.Pool{.allocator = allocator, .threads = &threads};
     try pool.init(.{.allocator = allocator, .n_jobs = NPROC});
     defer pool.deinit();
-    for (0..GRID_HEIGHT) |y| {
+    inline for (0..GRID_HEIGHT) |y| {
         for (0..GRID_WIDTH) |x| {
             try pool.spawn(workerFunction, .{x, y});
         }
@@ -160,7 +115,7 @@ pub fn main() !void {
     c.SetTraceLogLevel(c.LOG_FATAL | c.LOG_WARNING | c.LOG_ERROR);
     c.SetTargetFPS(60);
     c.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "welp");
-    while (!c.WindowShouldClose()) {
+    for (0..100) |_| {
         c.BeginDrawing();
         for (0..GRID_HEIGHT) |y| {
             for (0..GRID_WIDTH) |x| {
@@ -174,7 +129,7 @@ pub fn main() !void {
             }
         }
         c.EndDrawing();
-        if (c.IsKeyPressed(c.KEY_R)) try init_grid();
+        //if (c.IsKeyPressed(c.KEY_R)) try init_grid();
         try next(allocator);
     }
     c.CloseWindow();
