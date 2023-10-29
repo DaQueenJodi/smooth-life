@@ -1,8 +1,10 @@
 const std = @import("std");
 const c = @import("c.zig");
+const Allocator = std.mem.Allocator;
 
 const clamp = std.math.clamp;
 
+const NPROC = 4;
 
 const USING_SDL = false;
 const USING_RAYLIB = !USING_SDL;
@@ -114,15 +116,26 @@ fn calculate_new_value(x: usize, y: usize) f32 {
     return res*2.0 - 1;
 }
 
-fn next() void {
+fn workerFunction(x: usize, y: usize) void {
+    const cell = &grid[y*GRID_HEIGHT+x];
+    const new_val = calculate_new_value(x, y);
+    cell.* = clamp(cell.* + delta_time*new_val, 0.0, 1.0);
+}
+
+fn next(allocator: Allocator) !void {
     grid_copy = grid;
-    inline for (0..GRID_HEIGHT) |y| {
+
+    var threads: [NPROC]std.Thread = undefined;
+    var pool = std.Thread.Pool{.allocator = allocator, .threads = &threads};
+    try pool.init(.{.allocator = allocator, .n_jobs = NPROC});
+    defer pool.deinit();
+    for (0..GRID_HEIGHT) |y| {
         for (0..GRID_WIDTH) |x| {
-            const cell = &grid[y*GRID_HEIGHT+x];
-            const new_val = calculate_new_value(x, y);
-            cell.* = clamp(cell.* + delta_time*new_val, 0.0, 1.0);
+            try pool.spawn(workerFunction, .{x, y});
         }
     }
+    var wait_group = std.Thread.WaitGroup{};
+    pool.waitAndWork(&wait_group);
 }
 
 fn init_grid() !void {
@@ -140,6 +153,9 @@ fn init_grid() !void {
 }
 
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
     try init_grid();
     c.SetTraceLogLevel(c.LOG_FATAL | c.LOG_WARNING | c.LOG_ERROR);
     c.SetTargetFPS(60);
@@ -158,8 +174,8 @@ pub fn main() !void {
             }
         }
         c.EndDrawing();
-        //if (c.IsKeyPressed(c.KEY_R)) try init_grid();
-        next();
+        if (c.IsKeyPressed(c.KEY_R)) try init_grid();
+        try next(allocator);
     }
     c.CloseWindow();
 }
